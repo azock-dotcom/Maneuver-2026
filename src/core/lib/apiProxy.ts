@@ -4,52 +4,33 @@ interface ProxyRequestOptions {
   apiKeyOverride?: string;
 }
 
-function getProxyBaseUrl(): string {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  if (import.meta.env.DEV && window.location.port === '5173') {
-    return `${window.location.protocol}//${window.location.hostname}:8888`;
-  }
-
-  return '';
-}
-
 export async function proxyGetJson<T>(
   provider: ApiProvider,
   endpoint: string,
   options: ProxyRequestOptions = {}
 ): Promise<T> {
-  const query = new URLSearchParams({
-    provider,
-    endpoint,
-  });
+  // 1. Determine the Base URL
+  // If it's TBA, we go to their v3 API. 
+  const baseUrl = provider === 'tba' 
+    ? 'https://www.thebluealliance.com/api/v3' 
+    : ''; 
 
-  const response = await fetch(`${getProxyBaseUrl()}/.netlify/functions/api-proxy?${query.toString()}`, {
+  // 2. Clean the endpoint (remove leading slashes if they exist)
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+
+  // 3. Make the direct call
+  const response = await fetch(`${baseUrl}/${cleanEndpoint}`, {
     method: 'GET',
     headers: {
-      Accept: 'application/json',
-      ...(options.apiKeyOverride ? { 'X-Client-Api-Key': options.apiKeyOverride } : {}),
+      'Accept': 'application/json',
+      // Use your API key from the .env file
+      'X-TBA-Auth-Key': options.apiKeyOverride || import.meta.env.VITE_TBA_API_KEY,
     },
   });
 
-  const text = await response.text();
-  let payload: unknown = null;
-
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = text;
-  }
-
   if (!response.ok) {
-    const message =
-      (typeof payload === 'object' && payload !== null && 'error' in payload && typeof (payload as { error?: unknown }).error === 'string')
-        ? (payload as { error: string }).error
-        : `Proxy request failed (${response.status})`;
-    throw new Error(message);
+    throw new Error(`TBA Request failed: ${response.status} ${response.statusText}`);
   }
 
-  return payload as T;
+  return await response.json() as T;
 }
